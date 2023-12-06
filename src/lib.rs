@@ -6,8 +6,10 @@ mod plot;
 mod read_data;
 
 use crate::plot::start_battery_plot;
+use crate::read_data::get_data;
 use crate::read_data::sort_hashmap;
 use crate::read_data::ChargeState;
+pub use plotters_cairo::CairoBackend;
 
 use plotters::prelude::*;
 use std::collections::HashMap;
@@ -56,4 +58,10 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
     )?;
 
     Ok(())
+}
+
+pub fn get_data_from_csv(
+    file_path: &str,
+) -> Result<HashMap<DateTime<Utc>, BatteryHistoryRecord>, Box<dyn Error>> {
+    get_data(file_path)
 }
