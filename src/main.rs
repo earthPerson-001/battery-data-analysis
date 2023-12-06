@@ -1,8 +1,5 @@
-
 mod plot;
 mod read_data;
-
-use std::error::Error;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -11,9 +8,8 @@ use crate::read_data::get_data;
 use crate::read_data::sort_hashmap;
 use crate::read_data::ChargeState;
 
-use plotters::backend::BitMapBackend;
 use crate::plot::start_battery_plot;
-
+use plotters::backend::BitMapBackend;
 
 fn main() {
     /* reading data from csv */
@@ -53,11 +49,11 @@ fn main() {
 
     let drawing_backend = BitMapBackend::new(file_name.as_str(), (4000, 1000));
 
-
     start_battery_plot(
         (&x_data_charging, &y_data_charging),
         (&x_data_discharging, &y_data_discharging),
         (&x_data_none, &y_data_none),
-        drawing_backend
-    ).unwrap();
+        drawing_backend,
+    )
+    .unwrap();
 }
