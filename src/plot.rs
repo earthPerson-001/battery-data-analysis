@@ -1,28 +1,32 @@
 
+use std::error::Error;
+
 use chrono::DateTime;
 use chrono::Utc;
 use itertools::izip;
+
 use plotters::prelude::*;
 use plotters::style::full_palette::PURPLE;
 
-/// 
+
+///
 /// Plot the battery graph consisting of charging, discharging and unindentified portions.
 /// If proper separation is provided in each portions, visual distinction can be made otherwise
 /// ever curves will be spread across whole graph making only the last one visible
-/// 
+///
 /// # Paramaters
 /// id: unique graph id
 ///
-fn plot_battery_data(
+fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
     charging: (&[DateTime<Utc>], &[i32]),
     discharging: (&[DateTime<Utc>], &[i32]),
     none: (&[DateTime<Utc>], &[i32]),
     id: i32,
-) {
-    let file_name = format!("images/battery_report-{id}.png");
+    backend: DB,
+) -> Result<(), Box<dyn Error + 'a>> {
 
-    let root_area = BitMapBackend::new(file_name.as_str(), (4000, 1000)).into_drawing_area();
-    root_area.fill(&WHITE).unwrap();
+    let root_area = backend.into_drawing_area();
+    root_area.fill(&WHITE)?;
 
     let mut start_date: DateTime<Utc> = DateTime::<Utc>::MAX_UTC;
     let mut end_date: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
@@ -53,10 +57,9 @@ fn plot_battery_data(
         .build_cartesian_2d(
             start_date..end_date,
             min_capacity * 0.1 as i32..max_capacity,
-        )
-        .unwrap();
+        )?;
 
-    ctx.configure_mesh().draw().unwrap();
+    ctx.configure_mesh().draw()?;
 
     let line_colors = [GREEN, RED, BLACK];
     let dot_colors = [BLUE, YELLOW, PURPLE];
@@ -70,8 +73,7 @@ fn plot_battery_data(
                 .zip(y.iter())
                 .map(|(date, capacity)| (*date, *capacity)),
             &line_colors[i],
-        ))
-        .unwrap();
+        ))?;
 
         // the dots
         ctx.draw_series(x.iter().zip(y.iter()).map(|(date, capacity)| {
@@ -84,21 +86,23 @@ fn plot_battery_data(
                     stroke_width: 2,
                 },
             )
-        }))
-        .unwrap();
+        }))?;
     }
+
+    Ok(())
 }
 
 /// Plot single graph of the whole data
 /// and plot smaller graphs of various sections (turned off because it required long time)
-/// 
+///
 /// todo: provide interface to control the size of each small graph
-/// 
-pub fn start_battery_plot(
+///
+pub fn start_battery_plot<'a, DB: DrawingBackend + 'a>(
     charging: (&[DateTime<Utc>], &[i32]),
     discharging: (&[DateTime<Utc>], &[i32]),
-    none: (&[DateTime<Utc>], &[i32])
-) {
+    none: (&[DateTime<Utc>], &[i32]),
+    backend: DB,
+) -> Result<(), Box<dyn Error + 'a>> {
     let x_data_charging = charging.0;
     let y_data_charging = charging.1;
 
@@ -108,14 +112,14 @@ pub fn start_battery_plot(
     let x_data_none = none.0;
     let y_data_none = none.1;
 
-
     // the whole graph
-    plot_battery_data(
+    plot_battery_data_pdf(
         (x_data_charging, y_data_charging),
         (x_data_discharging, y_data_discharging),
         (x_data_none, y_data_none),
         0,
-    );
+        backend
+    )?;
 
     // plotting smaller graphs
     // Takes a lot of time, so commenting it out
@@ -145,4 +149,7 @@ pub fn start_battery_plot(
     }
     */
     // other parts
+
+    Ok(())
 }
+

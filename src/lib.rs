@@ -1,25 +1,23 @@
+use chrono::DateTime;
+use chrono::Utc;
+use read_data::BatteryHistoryRecord;
 
 mod plot;
 mod read_data;
 
-use std::error::Error;
-
-use chrono::DateTime;
-use chrono::Utc;
-
-use crate::read_data::get_data;
+use crate::plot::start_battery_plot;
 use crate::read_data::sort_hashmap;
 use crate::read_data::ChargeState;
 
-use plotters::backend::BitMapBackend;
-use crate::plot::start_battery_plot;
+use plotters::prelude::*;
+use std::collections::HashMap;
+use std::error::Error;
 
-
-fn main() {
+pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
+    backend: DB,
+    data: HashMap<DateTime<Utc>, BatteryHistoryRecord>,
+) -> Result<(), Box<dyn Error + 'a>> {
     /* reading data from csv */
-
-    let data =
-        get_data("./assets/battery-history-csvs/batteryreport.csv").expect("Cannot load csv data");
 
     /* Separating data into charge, discharge and unidenfied portions */
     // todo: separate into smaller portions so that proper visualizations can be done in graph
@@ -49,15 +47,13 @@ fn main() {
     sort_hashmap(&data, &mut x_data_none, &mut y_data_none);
 
     /* Visualize the data */
-    let file_name = format!("images/battery_report-{}.png", 0);
-
-    let drawing_backend = BitMapBackend::new(file_name.as_str(), (4000, 1000));
-
 
     start_battery_plot(
         (&x_data_charging, &y_data_charging),
         (&x_data_discharging, &y_data_discharging),
         (&x_data_none, &y_data_none),
-        drawing_backend
-    ).unwrap();
+        backend,
+    )?;
+
+    Ok(())
 }
