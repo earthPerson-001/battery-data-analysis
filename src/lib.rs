@@ -34,7 +34,6 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
     let mut y_data_none: Vec<i32> = vec![];
 
     for (_, record) in data.iter() {
-        println!("{:?}", record);
         match record.state {
             ChargeState::Charging => x_data_charging.push(record.date_time),
             ChargeState::Discharging => x_data_discharging.push(record.date_time),
