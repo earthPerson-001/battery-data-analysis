@@ -87,8 +87,10 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
                 },
             )
         }))?;
-    }
 
+
+    }
+    root_area.present()?;
     Ok(())
 }
 
