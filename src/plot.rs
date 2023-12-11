@@ -1,13 +1,10 @@
-
 use std::error::Error;
 
 use chrono::DateTime;
 use chrono::Utc;
-use itertools::izip;
 
 use plotters::prelude::*;
 use plotters::style::full_palette::PURPLE;
-
 
 ///
 /// Plot the battery graph consisting of charging, discharging and unindentified portions.
@@ -17,16 +14,17 @@ use plotters::style::full_palette::PURPLE;
 /// # Paramaters
 /// id: unique graph id
 ///
+/// backend: the backend for plotting e.g. CairoBackend, SVGBackend, etc
+///
 fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
-    charging: (&[DateTime<Utc>], &[i32]),
-    discharging: (&[DateTime<Utc>], &[i32]),
-    none: (&[DateTime<Utc>], &[i32]),
-    id: i32,
+    charging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
+    discharging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
+    none: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     backend: DB,
+    show_data_points: bool,
 ) -> Result<(), Box<dyn Error + 'a>> {
-
     let root_area = backend.into_drawing_area();
-    root_area.fill(&WHITE)?;
+    root_area.fill(&TRANSPARENT)?;
 
     let mut start_date: DateTime<Utc> = DateTime::<Utc>::MAX_UTC;
     let mut end_date: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
@@ -34,61 +32,87 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
     let mut min_capacity = i32::MAX;
     let mut max_capacity = i32::MIN;
 
-    let mut set_min = |x: (&[DateTime<Utc>], &[i32])| {
+    let mut set_min_and_max = |x: (&Vec<DateTime<Utc>>, &Vec<i32>)| {
         if !x.0.is_empty() {
             start_date = start_date.min(x.0.first().unwrap().to_owned());
             end_date = end_date.max(x.0.last().unwrap().to_owned());
         }
 
         if !x.1.is_empty() {
-            min_capacity = min_capacity.min(x.1.first().unwrap().to_owned());
-            max_capacity = max_capacity.max(x.1.last().unwrap().to_owned());
+            min_capacity = min_capacity.min(x.1.iter().min().unwrap().to_owned());
+            max_capacity = max_capacity.max(x.1.iter().max().unwrap().to_owned());
         }
     };
+    charging
+        .0
+        .iter()
+        .zip(charging.1.iter())
+        .for_each(&mut set_min_and_max);
+    discharging
+        .0
+        .iter()
+        .zip(discharging.1.iter())
+        .for_each(&mut set_min_and_max);
+    none.0
+        .iter()
+        .zip(none.1.iter())
+        .for_each(&mut set_min_and_max);
 
-    set_min(charging);
-    set_min(discharging);
-    set_min(none);
+    // if the start_date or end_date are still MAX_UTC and MIN_UTC respectively, there was something wrong
+    // debug
+    // todo: return proper error when this happens
+    assert_ne!(start_date, DateTime::<Utc>::MAX_UTC);
+    assert_ne!(end_date, DateTime::<Utc>::MIN_UTC);
 
     let mut ctx = ChartBuilder::on(&root_area)
-        .set_label_area_size(LabelAreaPosition::Left, 40)
-        .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .caption("Battery Usage History", ("sans-serif", 40))
+        .y_label_area_size(70)
+        .x_label_area_size(100)
+        // .caption("Battery Usage History", ("sans-serif", 40))
         .build_cartesian_2d(
             start_date..end_date,
-            min_capacity * 0.1 as i32..max_capacity,
+            (min_capacity as f64 - min_capacity as f64 * 0.5) as i32
+                ..(max_capacity as f64 + min_capacity as f64 * 0.5) as i32,
         )?;
-
-    ctx.configure_mesh().draw()?;
+    
+    ctx.configure_mesh()
+        .x_label_formatter(&|x| {
+            format!("{} hrs", (Utc::now().signed_duration_since(x).num_hours()))
+        })
+        .disable_mesh()
+        .light_line_style(WHITE)
+        .draw()?;
 
     let line_colors = [GREEN, RED, BLACK];
     let dot_colors = [BLUE, YELLOW, PURPLE];
 
     for (i, state) in [charging, discharging, none].iter().enumerate() {
-        let (x, y) = state;
+        for (trend_charge, trend_state) in state.0.iter().zip(state.1.iter()) {
+            // the line
+            ctx.draw_series(LineSeries::new(
+                trend_charge
+                    .iter()
+                    .zip(trend_state.iter())
+                    .map(|(date, capacity)| (*date, *capacity)),
+                &line_colors[i],
+            ))?;
 
-        // the line
-        ctx.draw_series(LineSeries::new(
-            x.iter()
-                .zip(y.iter())
-                .map(|(date, capacity)| (*date, *capacity)),
-            &line_colors[i],
-        ))?;
-
-        // the dots
-        ctx.draw_series(x.iter().zip(y.iter()).map(|(date, capacity)| {
-            Circle::new(
-                (*date, *capacity),
-                5,
-                ShapeStyle {
-                    color: dot_colors[i].mix(1.0),
-                    filled: true,
-                    stroke_width: 2,
-                },
-            )
-        }))?;
-
-
+            // the dots
+            if show_data_points {
+                ctx.draw_series(trend_charge.iter().zip(trend_state.iter()).map(
+                    |(date, capacity)| {
+                        Circle::new(
+                            (*date, *capacity),
+                            5,
+                            ShapeStyle {
+                                color: dot_colors[i].mix(1.0),
+                                filled: true,
+                                stroke_width: 1,
+                            },
+                        )
+                    },
+                ))?;
+            }
+        }
     }
     root_area.present()?;
     Ok(())
@@ -100,10 +124,11 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
 /// todo: provide interface to control the size of each small graph
 ///
 pub fn start_battery_plot<'a, DB: DrawingBackend + 'a>(
-    charging: (&[DateTime<Utc>], &[i32]),
-    discharging: (&[DateTime<Utc>], &[i32]),
-    none: (&[DateTime<Utc>], &[i32]),
+    charging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
+    discharging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
+    none: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     backend: DB,
+    show_data_points: bool,
 ) -> Result<(), Box<dyn Error + 'a>> {
     let x_data_charging = charging.0;
     let y_data_charging = charging.1;
@@ -119,39 +144,9 @@ pub fn start_battery_plot<'a, DB: DrawingBackend + 'a>(
         (x_data_charging, y_data_charging),
         (x_data_discharging, y_data_discharging),
         (x_data_none, y_data_none),
-        0,
-        backend
+        backend,
+        show_data_points,
     )?;
-
-    // plotting smaller graphs
-    // Takes a lot of time, so commenting it out
-    /*
-    // number of data in a graph
-    const NUM_DATA: usize = 10;
-
-    let x_chunks_charging = x_data_charging.chunks(NUM_DATA);
-    let y_chunks_charging = y_data_charging.chunks(NUM_DATA);
-
-    let x_chunks_discharging = x_data_charging.chunks(NUM_DATA);
-    let y_chunks_discharging = y_data_charging.chunks(NUM_DATA);
-
-    let x_chunks_none = x_data_charging.chunks(NUM_DATA);
-    let y_chunks_none = y_data_charging.chunks(NUM_DATA);
-
-
-    let mut index: i32 = 1;
-    for (x_charging, y_charging, x_discharging, y_discharging, x_none, y_none) in izip!(x_chunks_charging, y_chunks_charging, x_chunks_discharging, y_chunks_discharging, x_chunks_none, y_chunks_none) {
-        plot_battery_data(
-            (x_charging, y_charging),
-            (x_discharging, y_discharging),
-            (x_none, y_none),
-            index,
-        );
-        index += 1;
-    }
-    */
-    // other parts
 
     Ok(())
 }
-
