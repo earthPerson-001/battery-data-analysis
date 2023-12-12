@@ -1,8 +1,8 @@
 mod plot;
 mod read_data;
 
-use chrono::DateTime;
-use chrono::Utc;
+use chrono::{DateTime, Duration, Utc};
+use read_data::BatteryHistoryRecord;
 
 use crate::read_data::get_data;
 use crate::read_data::sort_hashmap;
@@ -11,14 +11,17 @@ use crate::read_data::ChargeState;
 use crate::plot::start_battery_plot;
 use plotters::backend::BitMapBackend;
 
+use makima_spline::Spline;
+
 enum PreviousVal {
     None,
     Increasing,
     Decreasing,
 }
 
-const FROM_DAYS_BEFORE: Option<i64> = Some(1);
+const FROM_DAYS_BEFORE: Option<i64> = Some(14);
 const TO_DAYS_BEFORE: Option<i64> = Some(0);
+const INTERPOLATE_DATA: bool = true;
 
 fn main() {
     /* reading data from csv */
@@ -45,8 +48,8 @@ fn main() {
         .to_owned();
 
     let mut sanitized_data = data;
-    let mut x_data: Vec<DateTime<Utc>> = Vec::new();
-    let mut y_data: Vec<i32> = Vec::new();
+    let mut original_x_data: Vec<DateTime<Utc>> = Vec::new();
+    let mut original_y_data: Vec<i32> = Vec::new();
 
     // removing all the entries before the start days
     if let Some(number_of_days) = FROM_DAYS_BEFORE {
@@ -62,7 +65,61 @@ fn main() {
 
     /* Separating data into charge, discharge and unidenfied portions */
 
-    sort_hashmap(&sanitized_data, &mut x_data, &mut y_data);
+    sort_hashmap(&sanitized_data, &mut original_x_data, &mut original_y_data);
+
+    let x_data;
+    let y_data;
+    if INTERPOLATE_DATA {
+        let converted_datetimes = original_x_data
+            .iter()
+            .map(|dt| dt.timestamp() as f64)
+            .collect::<Vec<f64>>();
+        let converted_capacities = original_y_data
+            .iter()
+            .map(|capacity| *capacity as f64)
+            .collect::<Vec<f64>>();
+
+        let points = makima_spline::vec_to_points(&converted_datetimes, &converted_capacities);
+
+        let spline = Spline::from_vec(points);
+
+        // interpolating for each minute
+        let mut current_date = original_x_data.first().unwrap().to_owned();
+        let last_date = original_x_data.last().unwrap().to_owned();
+        let increment_by_minutes = 1;
+
+        // new vectors for x and y date
+        let mut interpolated_x_data: Vec<DateTime<Utc>> = Vec::new();
+        let mut interpolated_y_data: Vec<i32> = Vec::new();
+
+        while current_date <= last_date {
+            interpolated_x_data.push(current_date);
+            let interpolated_y = spline.sample(current_date.timestamp() as f64);
+
+            interpolated_y_data.push(interpolated_y as i32);
+
+            current_date = current_date
+                .checked_add_signed(Duration::minutes(increment_by_minutes))
+                .unwrap();
+
+            let bat_record = BatteryHistoryRecord {
+                date_time: current_date,
+                capacity: interpolated_y as i32,
+                state: match sanitized_data.get(&current_date) {
+                    Some(valid_record) => valid_record.state,
+                    None => ChargeState::Unknown,
+                },
+            };
+
+            // changing the key of the dictionary
+            sanitized_data.insert(current_date, bat_record);
+        }
+        x_data = interpolated_x_data;
+        y_data = interpolated_y_data;
+    } else {
+        x_data = original_x_data.clone();
+        y_data = original_y_data.clone();
+    }
 
     // the data must be sorted up to now, so we can separate into increasing and decreasing trends
     let mut cur_index = 0;
@@ -226,12 +283,25 @@ fn main() {
 
     let drawing_backend = BitMapBackend::new(file_name.as_str(), (4000, 1000));
 
-    start_battery_plot(
-        (&x_data_charging, &y_data_charging),
-        (&x_data_discharging, &y_data_discharging),
-        (&x_data_none, &y_data_none),
-        drawing_backend,
-        true,
-    )
-    .unwrap();
+    if INTERPOLATE_DATA {
+        start_battery_plot(
+            (&original_x_data, &original_y_data),
+            (&x_data_charging, &y_data_charging),
+            (&x_data_discharging, &y_data_discharging),
+            (&x_data_none, &y_data_none),
+            drawing_backend,
+            true,
+        )
+        .unwrap();
+    } else {
+        start_battery_plot(
+            (&x_data, &y_data),
+            (&x_data_charging, &y_data_charging),
+            (&x_data_discharging, &y_data_discharging),
+            (&x_data_none, &y_data_none),
+            drawing_backend,
+            true,
+        )
+        .unwrap();
+    }
 }

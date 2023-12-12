@@ -3,6 +3,7 @@ use std::error::Error;
 use chrono::DateTime;
 use chrono::Utc;
 
+use crate::read_data::BatteryHistoryRecord;
 use plotters::prelude::*;
 use plotters::style::full_palette::PURPLE;
 
@@ -17,6 +18,7 @@ use plotters::style::full_palette::PURPLE;
 /// backend: the backend for plotting e.g. CairoBackend, SVGBackend, etc
 ///
 fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
+    original_sorted_data: (&Vec<DateTime<Utc>>, &Vec<i32>),
     charging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     discharging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     none: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
@@ -73,7 +75,7 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
             (min_capacity as f64 - min_capacity as f64 * 0.5) as i32
                 ..(max_capacity as f64 + min_capacity as f64 * 0.5) as i32,
         )?;
-    
+
     ctx.configure_mesh()
         .x_label_formatter(&|x| {
             format!("{} hrs", (Utc::now().signed_duration_since(x).num_hours()))
@@ -83,7 +85,24 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
         .draw()?;
 
     let line_colors = [GREEN, RED, BLACK];
-    let dot_colors = [BLUE, YELLOW, PURPLE];
+    let dot_color =  BLUE;
+
+    // draw the dots only on the original data, not on the interpolated data
+    if show_data_points {
+        ctx.draw_series(original_sorted_data.0.iter().zip(original_sorted_data.1.iter()).map(
+            |(date, capacity)| {
+                Circle::new(
+                    (*date, *capacity),
+                    5,
+                    ShapeStyle {
+                        color: dot_color.mix(1.0),
+                        filled: true,
+                        stroke_width: 1,
+                    },
+                )
+            },
+        ))?;
+    }
 
     for (i, state) in [charging, discharging, none].iter().enumerate() {
         for (trend_charge, trend_state) in state.0.iter().zip(state.1.iter()) {
@@ -95,23 +114,6 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
                     .map(|(date, capacity)| (*date, *capacity)),
                 &line_colors[i],
             ))?;
-
-            // the dots
-            if show_data_points {
-                ctx.draw_series(trend_charge.iter().zip(trend_state.iter()).map(
-                    |(date, capacity)| {
-                        Circle::new(
-                            (*date, *capacity),
-                            5,
-                            ShapeStyle {
-                                color: dot_colors[i].mix(1.0),
-                                filled: true,
-                                stroke_width: 1,
-                            },
-                        )
-                    },
-                ))?;
-            }
         }
     }
     root_area.present()?;
@@ -124,6 +126,7 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
 /// todo: provide interface to control the size of each small graph
 ///
 pub fn start_battery_plot<'a, DB: DrawingBackend + 'a>(
+    original_sorted_data: (&Vec<DateTime<Utc>>, &Vec<i32>),
     charging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     discharging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     none: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
@@ -141,6 +144,7 @@ pub fn start_battery_plot<'a, DB: DrawingBackend + 'a>(
 
     // the whole graph
     plot_battery_data_pdf(
+        original_sorted_data,
         (x_data_charging, y_data_charging),
         (x_data_discharging, y_data_discharging),
         (x_data_none, y_data_none),

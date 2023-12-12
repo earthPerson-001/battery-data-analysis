@@ -1,6 +1,5 @@
-use chrono::DateTime;
-use chrono::Utc;
-use read_data::BatteryHistoryRecord;
+use chrono::{DateTime, Duration, Utc};
+use read_data::{BatteryHistoryRecord, ChargeState};
 
 mod plot;
 mod read_data;
@@ -13,6 +12,8 @@ pub use plotters_cairo::CairoBackend;
 use plotters::prelude::*;
 use std::collections::HashMap;
 use std::error::Error;
+
+use makima_spline::Spline;
 
 enum PreviousVal {
     None,
@@ -29,14 +30,14 @@ pub fn display_error<'a, DB: DrawingBackend + 'a>(
     drawing_area.fill(&BLACK).unwrap();
     let text_style = ("sans-serif", 20, &RED).into_text_style(&drawing_area);
     let errors = error_message.lines();
-    
+
     for (i, error) in errors.enumerate() {
         drawing_area
             .draw_text(
                 error,
                 &text_style,
                 (
-                    pos.0 ,
+                    pos.0,
                     pos.1 + (i as f64 * text_style.font.get_size()) as i32,
                 ),
             )
@@ -50,6 +51,7 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
     from_days_before: Option<i64>,
     to_days_before: Option<i64>,
     show_data_points: bool,
+    interpolate: bool,
 ) -> Result<(), Box<dyn Error + 'a>> {
     /* reading data from csv */
 
@@ -69,8 +71,8 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
         .to_owned();
 
     let mut sanitized_data = data;
-    let mut x_data: Vec<DateTime<Utc>> = Vec::new();
-    let mut y_data: Vec<i32> = Vec::new();
+    let mut original_x_data: Vec<DateTime<Utc>> = Vec::new();
+    let mut original_y_data: Vec<i32> = Vec::new();
 
     // removing all the entries before the start days
     if let Some(number_of_days) = from_days_before {
@@ -84,9 +86,63 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
         sanitized_data.retain(|date, _| (date) < (&end_date))
     }
 
-    /* Separating data into charge, discharge and unidenfied portions */
+    /* Separating data into charge, discharge and unidentified portions */
 
-    sort_hashmap(&sanitized_data, &mut x_data, &mut y_data);
+    sort_hashmap(&sanitized_data, &mut original_x_data, &mut original_y_data);
+    let x_data;
+    let y_data;
+    if interpolate {
+        let converted_datetimes = original_x_data
+            .iter()
+            .map(|dt| dt.timestamp() as f64)
+            .collect::<Vec<f64>>();
+        let converted_capacities = original_y_data
+            .iter()
+            .map(|capacity| *capacity as f64)
+            .collect::<Vec<f64>>();
+
+        let points = makima_spline::vec_to_points(&converted_datetimes, &converted_capacities);
+
+        let spline = Spline::from_vec(points);
+
+        // interpolating for each minute
+        let mut current_date = original_x_data.first().unwrap().to_owned();
+        let last_date = original_x_data.last().unwrap().to_owned();
+        let increment_by_minutes = 1;
+
+        // new vectors for x and y date
+        let mut interpolated_x_data: Vec<DateTime<Utc>> = Vec::new();
+        let mut interpolated_y_data: Vec<i32> = Vec::new();
+
+        while current_date <= last_date {
+            interpolated_x_data.push(current_date);
+            let interpolated_y = spline.sample(current_date.timestamp() as f64);
+
+            interpolated_y_data.push(interpolated_y as i32);
+
+            current_date = current_date
+                .checked_add_signed(Duration::minutes(increment_by_minutes))
+                .unwrap();
+
+            let bat_record = BatteryHistoryRecord {
+                date_time: current_date,
+                capacity: interpolated_y as i32,
+                state: match sanitized_data.get(&current_date) {
+                    Some(valid_record) => valid_record.state,
+                    None => ChargeState::Unknown,
+                },
+            };
+
+            // changing the key of the dictionary
+            sanitized_data.insert(current_date, bat_record);
+        }
+
+        x_data = interpolated_x_data;
+        y_data = interpolated_y_data;
+    } else {
+        x_data = original_x_data.clone();
+        y_data = original_y_data.clone();
+    }
 
     // the data must be sorted up to now, so we can separate into increasing and decreasing trends
     let mut cur_index = 0;
@@ -257,13 +313,27 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
 
     /* Visualize the data */
 
-    start_battery_plot(
-        (&x_data_charging, &y_data_charging),
-        (&x_data_discharging, &y_data_discharging),
-        (&x_data_none, &y_data_none),
-        backend,
-        show_data_points,
-    )?;
+    if interpolate {
+        start_battery_plot(
+            (&original_x_data, &original_y_data),
+            (&x_data_charging, &y_data_charging),
+            (&x_data_discharging, &y_data_discharging),
+            (&x_data_none, &y_data_none),
+            backend,
+            show_data_points,
+        )
+        .unwrap();
+    } else {
+        start_battery_plot(
+            (&x_data, &y_data),
+            (&x_data_charging, &y_data_charging),
+            (&x_data_discharging, &y_data_discharging),
+            (&x_data_none, &y_data_none),
+            backend,
+            show_data_points,
+        )
+        .unwrap();
+    }
 
     Ok(())
 }
