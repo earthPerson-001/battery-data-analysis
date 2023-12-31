@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 pub use read_data::BatteryHistoryRecord;
-use read_data::ChargeState;
+pub use read_data::ChargeState;
 
 mod plot;
 mod read_data;

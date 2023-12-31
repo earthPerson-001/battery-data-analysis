@@ -30,7 +30,7 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
     let stroke_width = 5;
     let line_colors = [GREEN, RED, BLACK];
     let dot_color = BLUE;
-
+    let prediction_color = RGBAColor(240, 163, 10, 1.0);
 
     let root_area = backend.into_drawing_area();
     root_area.fill(&TRANSPARENT)?;
@@ -143,7 +143,7 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
             .iter()
             .zip(predicted.1.iter())
             .map(|(date, capacity)| (*date, *capacity)),
-        BLUE.stroke_width(stroke_width),
+        prediction_color.stroke_width(stroke_width),
     ))?;
 
     root_area.present()?;
