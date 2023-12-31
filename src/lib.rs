@@ -63,8 +63,15 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
         panic!("The provided data is empty.");
     }
 
+    // discard predicted data when show_prediction is false 
+    // and when the final date-time is past date-time
     let all_data: HashMap<DateTime<Utc>, BatteryHistoryRecord> = match show_prediction {
-        true => HashMap::from_iter(data.into_iter().chain(predicted_data.clone().into_iter())),
+        true => match to_days_before {
+            Some(0) => {
+                HashMap::from_iter(data.into_iter().chain(predicted_data.clone().into_iter()))
+            }
+            _ => data,
+        },
         false => data,
     };
 
@@ -105,9 +112,7 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
     if let Some(number_of_days) = to_days_before {
         // show prediction of future if to_days_before is 0 and prediction is true
         // i.e. showing only if the graph up to current is shown
-        if show_prediction && to_days_before.is_some() && to_days_before.unwrap() != 0 {
-            println!("Stripping from to days before");
-
+        if !show_prediction || (to_days_before.is_some() && to_days_before.unwrap() != 0) {
             let end_date = end_date - chrono::Duration::days(number_of_days);
             sanitized_data.retain(|date, _| (date) < (&end_date))
         }
@@ -348,11 +353,14 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
     let mut x_data_predicted: Vec<DateTime<Utc>> = Vec::new();
     let mut y_data_predicted: Vec<i32> = Vec::new();
 
-
     /* Visualize the data */
-    if show_prediction {
+    if show_prediction && to_days_before.is_some() && to_days_before.unwrap() == 0 {
         // sorting the predication
-        sort_hashmap(&predicted_data, &mut x_data_predicted, &mut y_data_predicted)
+        sort_hashmap(
+            &predicted_data,
+            &mut x_data_predicted,
+            &mut y_data_predicted,
+        )
     }
 
     if interpolate {
