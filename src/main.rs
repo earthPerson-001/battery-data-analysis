@@ -283,11 +283,15 @@ fn main() {
 
     let drawing_backend = BitMapBackend::new(file_name.as_str(), (4000, 1000));
 
+    // predicted values
+    let predicted: (Vec<DateTime<Utc>>, Vec<i32>) = (Vec::new(), Vec::new());
+
     if INTERPOLATE_DATA {
         start_battery_plot(
             (&original_x_data, &original_y_data),
             (&x_data_charging, &y_data_charging),
             (&x_data_discharging, &y_data_discharging),
+            (&predicted.0, &predicted.1),
             (&x_data_none, &y_data_none),
             drawing_backend,
             true,
@@ -298,6 +302,7 @@ fn main() {
             (&x_data, &y_data),
             (&x_data_charging, &y_data_charging),
             (&x_data_discharging, &y_data_discharging),
+            (&predicted.0, &predicted.1),
             (&x_data_none, &y_data_none),
             drawing_backend,
             true,

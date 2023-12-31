@@ -2,10 +2,9 @@ use std::error::Error;
 
 use chrono::DateTime;
 use chrono::Utc;
+use plotters::style::text_anchor::Pos;
 
-use crate::read_data::BatteryHistoryRecord;
 use plotters::prelude::*;
-use plotters::style::full_palette::PURPLE;
 
 ///
 /// Plot the battery graph consisting of charging, discharging and unindentified portions.
@@ -21,10 +20,18 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
     original_sorted_data: (&Vec<DateTime<Utc>>, &Vec<i32>),
     charging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     discharging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
+    predicted: (&Vec<DateTime<Utc>>, &Vec<i32>),
     none: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     backend: DB,
     show_data_points: bool,
 ) -> Result<(), Box<dyn Error + 'a>> {
+
+    // some constants
+    let stroke_width = 5;
+    let line_colors = [GREEN, RED, BLACK];
+    let dot_color = BLUE;
+
+
     let root_area = backend.into_drawing_area();
     root_area.fill(&TRANSPARENT)?;
 
@@ -55,6 +62,9 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
         .iter()
         .zip(discharging.1.iter())
         .for_each(&mut set_min_and_max);
+
+    set_min_and_max(predicted);
+
     none.0
         .iter()
         .zip(none.1.iter())
@@ -81,27 +91,38 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
             format!("{} hrs", (Utc::now().signed_duration_since(x).num_hours()))
         })
         .disable_mesh()
+        .label_style(TextStyle {
+            font: FontDesc::new(FontFamily::SansSerif, 20.0, FontStyle::Normal),
+            color: WHITE.to_backend_color(),
+            pos: Pos::default(),
+        })
+        .axis_style(ShapeStyle {
+            color: WHITE.to_rgba(),
+            stroke_width: 1,
+            filled: true,
+        })
         .light_line_style(WHITE)
         .draw()?;
 
-    let line_colors = [GREEN, RED, BLACK];
-    let dot_color =  BLUE;
-
     // draw the dots only on the original data, not on the interpolated data
     if show_data_points {
-        ctx.draw_series(original_sorted_data.0.iter().zip(original_sorted_data.1.iter()).map(
-            |(date, capacity)| {
-                Circle::new(
-                    (*date, *capacity),
-                    5,
-                    ShapeStyle {
-                        color: dot_color.mix(1.0),
-                        filled: true,
-                        stroke_width: 1,
-                    },
-                )
-            },
-        ))?;
+        ctx.draw_series(
+            original_sorted_data
+                .0
+                .iter()
+                .zip(original_sorted_data.1.iter())
+                .map(|(date, capacity)| {
+                    Circle::new(
+                        (*date, *capacity),
+                        5,
+                        ShapeStyle {
+                            color: dot_color.mix(1.0),
+                            filled: true,
+                            stroke_width: 1,
+                        },
+                    )
+                }),
+        )?;
     }
 
     for (i, state) in [charging, discharging, none].iter().enumerate() {
@@ -112,10 +133,19 @@ fn plot_battery_data_pdf<'a, DB: DrawingBackend + 'a>(
                     .iter()
                     .zip(trend_state.iter())
                     .map(|(date, capacity)| (*date, *capacity)),
-                &line_colors[i],
+                line_colors[i].stroke_width(stroke_width),
             ))?;
         }
     }
+    // drawing the predicted data
+    ctx.draw_series(LineSeries::new(
+        predicted.0
+            .iter()
+            .zip(predicted.1.iter())
+            .map(|(date, capacity)| (*date, *capacity)),
+        BLUE.stroke_width(stroke_width),
+    ))?;
+
     root_area.present()?;
     Ok(())
 }
@@ -129,6 +159,7 @@ pub fn start_battery_plot<'a, DB: DrawingBackend + 'a>(
     original_sorted_data: (&Vec<DateTime<Utc>>, &Vec<i32>),
     charging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     discharging: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
+    predicted: (&Vec<DateTime<Utc>>, &Vec<i32>),
     none: (&Vec<Vec<DateTime<Utc>>>, &Vec<Vec<i32>>),
     backend: DB,
     show_data_points: bool,
@@ -147,6 +178,7 @@ pub fn start_battery_plot<'a, DB: DrawingBackend + 'a>(
         original_sorted_data,
         (x_data_charging, y_data_charging),
         (x_data_discharging, y_data_discharging),
+        (predicted.0, predicted.1),
         (x_data_none, y_data_none),
         backend,
         show_data_points,

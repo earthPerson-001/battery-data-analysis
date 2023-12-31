@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
-use read_data::{BatteryHistoryRecord, ChargeState};
+pub use read_data::BatteryHistoryRecord;
+use read_data::ChargeState;
 
 mod plot;
 mod read_data;
@@ -47,11 +48,13 @@ pub fn display_error<'a, DB: DrawingBackend + 'a>(
 
 pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
     backend: DB,
+    predicted_data: HashMap<DateTime<Utc>, BatteryHistoryRecord>,
     data: HashMap<DateTime<Utc>, BatteryHistoryRecord>,
     from_days_before: Option<i64>,
     to_days_before: Option<i64>,
     show_data_points: bool,
     interpolate: bool,
+    show_prediction: bool,
 ) -> Result<(), Box<dyn Error + 'a>> {
     /* reading data from csv */
 
@@ -60,30 +63,54 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
         panic!("The provided data is empty.");
     }
 
-    let end_date = data
+    let all_data: HashMap<DateTime<Utc>, BatteryHistoryRecord> = match show_prediction {
+        true => HashMap::from_iter(data.into_iter().chain(predicted_data.clone().into_iter())),
+        false => data,
+    };
+
+    let end_date = all_data
         .iter()
         .reduce(|max_capacity_record, current| {
-            data.get_key_value(max_capacity_record.0.max(current.0))
+            all_data
+                .get_key_value(max_capacity_record.0.max(current.0))
                 .unwrap()
         })
         .unwrap()
         .0
         .to_owned();
 
-    let mut sanitized_data = data;
+    // all the data after the current date is prediction
+    let current_date_time = chrono::Utc::now();
+
+    let mut sanitized_data: HashMap<DateTime<Utc>, BatteryHistoryRecord> =
+        HashMap::from_iter(all_data);
     let mut original_x_data: Vec<DateTime<Utc>> = Vec::new();
     let mut original_y_data: Vec<i32> = Vec::new();
 
     // removing all the entries before the start days
     if let Some(number_of_days) = from_days_before {
-        let start_date = end_date - chrono::Duration::days(number_of_days);
+        let mut actual_number_of_days = number_of_days;
+
+        // if the prediction needs to be shown and to_days_before is zero
+        // i.e. showing only if the graph up to current is shown
+        if show_prediction && to_days_before.is_some() && to_days_before.unwrap() == 0 {
+            actual_number_of_days += 1;
+        }
+
+        let start_date = end_date - chrono::Duration::days(actual_number_of_days);
         sanitized_data.retain(|date, _| (date) > (&start_date));
     }
 
     // removing all the entries after the end days
     if let Some(number_of_days) = to_days_before {
-        let end_date = end_date - chrono::Duration::days(number_of_days);
-        sanitized_data.retain(|date, _| (date) < (&end_date))
+        // show prediction of future if to_days_before is 0 and prediction is true
+        // i.e. showing only if the graph up to current is shown
+        if show_prediction && to_days_before.is_some() && to_days_before.unwrap() != 0 {
+            println!("Stripping from to days before");
+
+            let end_date = end_date - chrono::Duration::days(number_of_days);
+            sanitized_data.retain(|date, _| (date) < (&end_date))
+        }
     }
 
     /* Separating data into charge, discharge and unidentified portions */
@@ -114,11 +141,14 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
         let mut interpolated_x_data: Vec<DateTime<Utc>> = Vec::new();
         let mut interpolated_y_data: Vec<i32> = Vec::new();
 
-        while current_date <= last_date {
-            interpolated_x_data.push(current_date);
-            let interpolated_y = spline.sample(current_date.timestamp() as f64);
+        while current_date <= current_date_time.min(last_date) {
+            let y_data: f64;
 
-            interpolated_y_data.push(interpolated_y as i32);
+            y_data = spline.sample(current_date.timestamp() as f64);
+
+            interpolated_x_data.push(current_date);
+
+            interpolated_y_data.push(y_data as i32);
 
             current_date = current_date
                 .checked_add_signed(Duration::minutes(increment_by_minutes))
@@ -126,7 +156,7 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
 
             let bat_record = BatteryHistoryRecord {
                 date_time: current_date,
-                capacity: interpolated_y as i32,
+                capacity: y_data as i32,
                 state: match sanitized_data.get(&current_date) {
                     Some(valid_record) => valid_record.state,
                     None => ChargeState::Unknown,
@@ -183,6 +213,11 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
         cur_capacity = sanitized_data.get(&x_data[cur_index]);
 
         if cur_capacity.is_none() {
+            continue;
+        }
+
+        // add to predicted vectors if the data is of the future
+        if x_data[cur_index] > current_date_time {
             continue;
         }
 
@@ -310,14 +345,22 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
         }
         prev_capacity = cur_capacity.unwrap().capacity;
     }
+    let mut x_data_predicted: Vec<DateTime<Utc>> = Vec::new();
+    let mut y_data_predicted: Vec<i32> = Vec::new();
+
 
     /* Visualize the data */
+    if show_prediction {
+        // sorting the predication
+        sort_hashmap(&predicted_data, &mut x_data_predicted, &mut y_data_predicted)
+    }
 
     if interpolate {
         start_battery_plot(
             (&original_x_data, &original_y_data),
             (&x_data_charging, &y_data_charging),
             (&x_data_discharging, &y_data_discharging),
+            (&x_data_predicted, &y_data_predicted),
             (&x_data_none, &y_data_none),
             backend,
             show_data_points,
@@ -328,6 +371,7 @@ pub fn battery_plot_pdf<'a, DB: DrawingBackend + 'a>(
             (&x_data, &y_data),
             (&x_data_charging, &y_data_charging),
             (&x_data_discharging, &y_data_discharging),
+            (&x_data_predicted, &y_data_predicted),
             (&x_data_none, &y_data_none),
             backend,
             show_data_points,

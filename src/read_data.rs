@@ -13,7 +13,7 @@ pub enum ChargeState {
     Unknown,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct BatteryHistoryRecord {
     #[serde(deserialize_with = "ts_s")]
     pub date_time: DateTime<Utc>,
