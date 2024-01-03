@@ -6,7 +6,7 @@ mod plot;
 mod read_data;
 
 use crate::plot::start_battery_plot;
-use crate::read_data::get_data;
+use crate::read_data::{get_data, get_log};
 use crate::read_data::sort_hashmap;
 pub use plotters_cairo::CairoBackend;
 
@@ -394,4 +394,10 @@ pub fn get_data_from_csv(
     file_path: &str,
 ) -> Result<HashMap<DateTime<Utc>, BatteryHistoryRecord>, Box<dyn Error>> {
     get_data(file_path)
+}
+
+pub fn get_log_from_csv(
+    file_path: &str
+) -> Result<HashMap<DateTime<Utc>, BatteryHistoryRecord>, Box<dyn Error>> {
+    get_log(file_path)
 }

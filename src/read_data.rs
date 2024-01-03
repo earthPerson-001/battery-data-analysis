@@ -14,11 +14,35 @@ pub enum ChargeState {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct BatteryLogRecord {
+    #[serde(rename(deserialize = "Date"))]
+    pub date_time: DateTime<Utc>,
+    #[serde(rename(deserialize = "Energy[J]"))]
+    pub capacity: f32,
+    #[serde(rename(deserialize = "Battery State"))]
+    pub state: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct BatteryHistoryRecord {
     #[serde(deserialize_with = "ts_s")]
     pub date_time: DateTime<Utc>,
     pub capacity: i32,
     pub state: ChargeState,
+}
+
+impl From<BatteryLogRecord> for BatteryHistoryRecord {
+    fn from(log_record: BatteryLogRecord) -> Self {
+        BatteryHistoryRecord {
+            capacity: (log_record.capacity / 3.6) as i32,
+            date_time: log_record.date_time,
+            state: match log_record.state {
+                -1 => ChargeState::Discharging,
+                1 => ChargeState::Charging,
+                _ => ChargeState::Unknown
+            },
+        }
+    }
 }
 
 /// Reads the csv from given path and deserializes the data into
@@ -40,6 +64,18 @@ pub fn get_data(
     for result in rdr.deserialize::<BatteryHistoryRecord>() {
         let record = result?;
         data_hash_map.insert(record.date_time, record);
+    }
+
+    Ok(data_hash_map)
+}
+
+pub fn get_log(path: &str) -> Result<HashMap<DateTime<Utc>, BatteryHistoryRecord>, Box<dyn Error>> {
+    let mut data_hash_map: HashMap<DateTime<Utc>, BatteryHistoryRecord> = HashMap::new();
+
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_path(path)?;
+    for result in rdr.deserialize::<BatteryLogRecord>() {
+        let record = result?;
+        data_hash_map.insert(record.date_time, record.into());
     }
 
     Ok(data_hash_map)
